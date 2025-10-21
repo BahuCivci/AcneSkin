@@ -1,0 +1,10 @@
+[packages]
+streamlit = "*"
+opencv-python = "*"
+mediapipe = "*"
+tensorflow = "*"
+pytorch = "*"
+Pillow = "*"
+numpy = "*"
+pandas = "*"
+matplotlib = "*"

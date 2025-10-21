@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+pydantic
+numpy
+pillow
+opencv-python-headless
+requests
+python-multipart
+streamlit==1.10.0
