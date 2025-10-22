@@ -7,7 +7,7 @@ import base64
 import io
 from PIL import Image
 
-app = FastAPI(title="AcneAI Inference Gateway")
+app = FastAPI(title="AcneAI Inference Gateway", docs_url=None, redoc_url=None)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 adapter = AcneAdapter()
@@ -24,7 +24,7 @@ def ready():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/infer", response_model=InferOut)
+@app.post("/infer")
 def infer(payload: InferIn):
     t0 = perf_counter()
 

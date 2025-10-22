@@ -1,29 +1,48 @@
-# README for AI Models in Acne AI – Skin Digital Twin
+# HAM10000 Model Directory
 
-## Overview
-This directory contains the AI models used in the Acne AI – Skin Digital Twin project. The models are designed to analyze skin conditions based on user-uploaded images and provide insights into skin health.
+Bu klasöre eğitilmiş HAM10000 modelini koyun.
 
-## Model Architecture
-The primary model architecture utilized in this project is a Convolutional Neural Network (CNN) that has been pretrained on a relevant dataset. The model is fine-tuned to recognize various skin conditions and features.
+## Beklenen Dosya
 
-## Training
-The models were trained using a dataset of labeled skin images. The training process involved the following steps:
-1. Data Collection: Gathering a diverse set of skin images representing various conditions.
-2. Preprocessing: Normalizing and augmenting the images to improve model robustness.
-3. Training: Utilizing a combination of supervised learning techniques to optimize model performance.
-4. Evaluation: Assessing model accuracy and making adjustments as necessary.
+- `ham10000_efficientnetb3.keras` - EfficientNetB3 modeli (Stage B - fine-tuned)
 
-## Usage
-To use the models in the application:
-1. Ensure that the required libraries are installed as specified in the `requirements.txt`.
-2. Load the model using the provided functions in `src/ai/model.py`.
-3. Run predictions on uploaded images using the functions defined in `src/ai/predict.py`.
+## Model Özellikleri
 
-## Future Work
-Future enhancements may include:
-- Expanding the dataset for better model generalization.
-- Implementing additional model architectures for comparative analysis.
-- Integrating user feedback to continuously improve model accuracy.
+- **Input Size:** 300x300x3
+- **Classes:** 7 sınıf
+- **Architecture:** EfficientNetB3 + Dense layers
+- **Training:** Focal Loss + MixUp + Class Weighting
+- **Dataset:** HAM10000 (10,015 dermatoskopi görüntüsü)
 
-## Acknowledgments
-Special thanks to the contributors and researchers who provided datasets and insights into skin analysis and AI model development.
+## Sınıflar
+
+1. `akiec` - Actinic Keratoses (Güneş Lekesi) - 327 örnek
+2. `bcc` - Basal Cell Carcinoma (Bazal Hücreli Kanser) - 514 örnek
+3. `bkl` - Benign Keratosis-like Lesions (İyi Huylu) - 1,099 örnek
+4. `df` - Dermatofibroma (Deri Fibroma) - 115 örnek
+5. `mel` - Melanoma (Kötü Huylu Kanser) - 1,113 örnek
+6. `nv` - Nevus (Ben/Mole) - 6,705 örnek (%67)
+7. `vasc` - Vascular Lesions (Damar Lezyonları) - 142 örnek
+
+## Kullanım
+
+```python
+from src.ai.predict import analyze_image
+
+result = analyze_image('path/to/image.jpg', 'models/ham10000_efficientnetb3.keras')
+print(result['predicted_class'])      # 'mel', 'nv', etc.
+print(result['confidence'])           # 0.85
+print(result['predicted_class_desc']) # 'Melanoma (Kötü Huylu Kanser)'
+```
+
+## Colab'dan Model İndirme
+
+Eğitim tamamlandığında Colab'dan indirin:
+
+```python
+# Colab'da
+from google.colab import files
+files.download('b3_stageB.keras')
+```
+
+Sonra bu klasöre `ham10000_efficientnetb3.keras` olarak kaydedin.

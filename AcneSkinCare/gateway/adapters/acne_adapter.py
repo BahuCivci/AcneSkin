@@ -2,21 +2,48 @@ from typing import Dict, List, Optional, Tuple
 import base64
 import hashlib
 import numpy as np
+import os
+import io
 from PIL import Image
 from .base import BaseAdapter
 
+# Import YOLO acne detection functions
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', 'acne-ai-skin-digital-twin'))
+from src.ai.acne_yolo import detect_acne_in_image, get_acne_detector, ACNE_CLASSES, CLASS_DESCRIPTIONS
+
 class AcneAdapter(BaseAdapter):
     """
-    Mock deterministic adapter that returns reproducible pseudo-random scores
-    based on the request_id + a hash of the image bytes.
+    YOLO-based acne detection adapter
     """
 
-    def _make_rng(self, request_id: str, image_bytes: bytes):
-        h = hashlib.sha256()
-        h.update(request_id.encode("utf-8"))
-        h.update(image_bytes[:1024] if image_bytes else b"")
-        seed_int = int.from_bytes(h.digest()[:8], "big") & 0xFFFFFFFF
-        return np.random.default_rng(seed_int)
+    def __init__(self):
+        self.model_path = os.path.join(
+            os.path.dirname(__file__),
+            '..', '..',
+            'acne-ai-skin-digital-twin',
+            'models',
+            'acne_detection.pt'
+        )
+        self.detector = None
+        self._load_model()
+
+    def _load_model(self):
+        """Load the YOLO acne detection model"""
+        try:
+            if os.path.exists(self.model_path):
+                # Initialize the YOLO detector with our custom model
+                from src.ai.acne_yolo import AcneYOLODetector
+                self.detector = AcneYOLODetector(self.model_path)
+                print(f"YOLO acne model loaded from {self.model_path}")
+            else:
+                print(f"Model not found at {self.model_path}")
+                # Use base detector without custom model
+                self.detector = get_acne_detector()
+        except Exception as e:
+            print(f"Error loading YOLO model: {e}")
+            # Fallback to base detector
+            self.detector = get_acne_detector()
 
     def infer(
         self,
@@ -26,32 +53,128 @@ class AcneAdapter(BaseAdapter):
         capture_ts: Optional[str] = None,
         image_size: Optional[Tuple[int, int]] = (512, 512)
     ) -> Dict:
-        rng = self._make_rng(request_id, image_bytes)
+        """YOLO acne detection inference"""
 
-        acne = float(rng.uniform(0.0, 1.0))
-        pores = float(rng.uniform(0.0, 1.0))
-        pigmentation = float(rng.uniform(0.0, 1.0))
-        hydration = float(rng.uniform(0.0, 1.0))
+        if self.detector is None:
+            # Fallback to mock if detector not available
+            return self._mock_inference(request_id, image_bytes, preprocess, capture_ts, image_size)
 
-        score_components = (
-            0.30 * (1.0 - acne) +
-            0.25 * (1.0 - pores) +
-            0.20 * (1.0 - pigmentation) +
-            0.25 * hydration
-        )
-        skin_score = round(float(score_components * 100.0), 2)
+        try:
+            # Set confidence threshold if provided
+            confidence_threshold = preprocess.get("confidence_threshold", 0.25)
+            self.detector.confidence_threshold = confidence_threshold
 
-        num_detections = int(rng.integers(0, 4))
-        width, height = image_size if image_size else (512, 512)
-        detections: List[Dict] = []
+            # Use YOLO detector for acne detection
+            result = self.detector.detect_acne(image_bytes)
+
+            detections = result.get('detections', [])
+            total_count = result.get('total_count', 0)
+            severity_score = result.get('severity_score', 0)
+            recommendations = result.get('recommendations', [])
+
+            # Calculate skin score (inverse of severity for compatibility)
+            skin_score = max(0, 100 - severity_score)
+
+            # Convert YOLO detections to gateway format
+            formatted_detections = []
+            for det in detections:
+                bbox = det.get('bbox', [0, 0, 50, 50])
+                formatted_detections.append({
+                    "label": det.get('class', 'unknown'),
+                    "x": int(bbox[0]),
+                    "y": int(bbox[1]),
+                    "w": int(bbox[2]),
+                    "h": int(bbox[3]),
+                    "confidence": float(det.get('confidence', 0.0))
+                })
+
+            # Generate warnings based on detections
+            warnings = self._generate_acne_warnings(detections, severity_score)
+
+            return {
+                "model_name": "yolo-acne-detection",
+                "model_version": "1.0.0",
+                "skin_score": skin_score,
+                "scores": {
+                    "total_acne_count": total_count,
+                    "severity_score": severity_score,
+                    "acne_types": {det['class']: det['confidence'] for det in detections}
+                },
+                "detections": formatted_detections,
+                "warnings": warnings + recommendations,
+                "meta": {
+                    "preprocess": preprocess,
+                    "capture_ts": capture_ts,
+                    "is_simulation": result.get('is_simulation', False)
+                }
+            }
+
+        except Exception as e:
+            print(f"❌ YOLO inference error: {e}")
+            # Fallback to mock
+            return self._mock_inference(request_id, image_bytes, preprocess, capture_ts, image_size)
+
+    def _generate_acne_warnings(self, detections: List[Dict], severity_score: float) -> List[str]:
+        """Generate acne-specific warnings based on detections"""
+        warnings = []
+
+        # Count acne types
+        acne_counts = {}
+        for det in detections:
+            acne_type = det.get('class', 'unknown')
+            acne_counts[acne_type] = acne_counts.get(acne_type, 0) + 1
+
+        # Severity-based warnings
+        if severity_score > 80:
+            warnings.append("🚨 Severe acne detected - Consider dermatological consultation")
+        elif severity_score > 60:
+            warnings.append("⚠️ Moderate acne - Professional treatment may be needed")
+        elif severity_score > 40:
+            warnings.append("⚠️ Mild to moderate acne - Consider acne treatment products")
+
+        # Specific acne type warnings
+        if 'nodules' in acne_counts or 'cyst' in acne_counts:
+            warnings.append("⚠️ Cystic/nodular acne detected - Professional treatment recommended")
+
+        if 'pustules' in acne_counts and acne_counts['pustules'] > 3:
+            warnings.append("⚠️ Multiple pustules detected - Monitor for signs of infection")
+
+        # Total count warnings
+        total_count = len(detections)
+        if total_count > 10:
+            warnings.append("⚠️ High acne lesion count - Consider comprehensive treatment plan")
+
+        # General disclaimer
+        warnings.append("ℹ️ This is AI assistance only - Consult dermatologist for professional diagnosis")
+
+        return warnings
+
+    def _mock_inference(self, request_id: str, image_bytes: bytes, preprocess: Dict,
+                       capture_ts: Optional[str], image_size: Optional[Tuple[int, int]]) -> Dict:
+        """Fallback mock inference when model is not available"""
+        h = hashlib.sha256()
+        h.update(request_id.encode("utf-8"))
+        h.update(image_bytes[:1024] if image_bytes else b"")
+        seed_int = int.from_bytes(h.digest()[:8], "big") & 0xFFFFFFFF
+        rng = np.random.default_rng(seed_int)
+
+        # Mock acne detections
+        acne_classes = list(ACNE_CLASSES.keys())[:-1]  # Exclude healthy_skin
+        num_detections = int(rng.uniform(1, 6))
+
+        mock_detections = []
         for i in range(num_detections):
-            w = int(rng.integers(max(1, width // 10), max(2, width // 3)))
-            h = int(rng.integers(max(1, height // 10), max(2, height // 3)))
-            x = int(rng.integers(0, max(1, width - w)))
-            y = int(rng.integers(0, max(1, height - h)))
-            confidence = float(round(rng.uniform(0.3, 0.99), 3))
-            detections.append({
-                "label": "lesion",
+            acne_type = rng.choice(acne_classes)
+            confidence = float(rng.uniform(0.4, 0.9))
+
+            # Random bounding box
+            x = int(rng.uniform(50, 400))
+            y = int(rng.uniform(50, 400))
+            w = int(rng.uniform(30, 100))
+            h = int(rng.uniform(30, 100))
+
+            mock_detections.append({
+                "label": ACNE_CLASSES[acne_type],
                 "x": x,
                 "y": y,
                 "w": w,
@@ -59,28 +182,23 @@ class AcneAdapter(BaseAdapter):
                 "confidence": confidence
             })
 
-        warnings: List[str] = []
-        if acne > 0.75:
-            warnings.append("High acne severity detected")
-        if hydration < 0.25:
-            warnings.append("Low skin hydration")
-        if pigmentation > 0.7:
-            warnings.append("Significant pigmentation detected")
+        severity_score = float(rng.uniform(20, 80))
+        skin_score = max(0, 100 - severity_score)
 
         return {
-            "model_name": "acne-mock-adapter",
+            "model_name": "yolo-acne-mock",
             "model_version": "0.1.0",
             "skin_score": skin_score,
             "scores": {
-                "acne": round(acne, 3),
-                "pores": round(pores, 3),
-                "pigmentation": round(pigmentation, 3),
-                "hydration": round(hydration, 3),
+                "total_acne_count": len(mock_detections),
+                "severity_score": severity_score,
+                "acne_types": {det['label']: det['confidence'] for det in mock_detections}
             },
-            "detections": detections,
-            "warnings": warnings,
+            "detections": mock_detections,
+            "warnings": ["ℹ️ Using mock acne detection - Install real model for accurate results"],
             "meta": {
                 "preprocess": preprocess,
-                "capture_ts": capture_ts
+                "capture_ts": capture_ts,
+                "is_simulation": True
             }
         }
